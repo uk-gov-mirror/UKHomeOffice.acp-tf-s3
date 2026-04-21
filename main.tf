@@ -244,7 +244,20 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
     id = "expire-objects"
 
     dynamic "filter" {
-      for_each = length(var.lifecycle_expiration_object_tags) > 0 && var.lifecycle_expiration_object_prefix == "" ? [1] : []
+      for_each = length(var.lifecycle_expiration_object_tags) == 1 && var.lifecycle_expiration_object_prefix == "" ? [1] : []
+      content {
+        dynamic "tag" {
+          for_each = var.lifecycle_expiration_object_tags
+          content {
+            key   = tag.key
+            value = tag.value
+          }
+        }
+      }
+    }
+
+    dynamic "filter" {
+      for_each = length(var.lifecycle_expiration_object_tags) > 1 && var.lifecycle_expiration_object_prefix == "" ? [1] : []
       content {
         and {
           tags = var.lifecycle_expiration_object_tags
