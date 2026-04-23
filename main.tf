@@ -112,7 +112,27 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
     id = "transition-to-infrequent-access-storage"
 
     dynamic "filter" {
-      for_each = length(var.lifecycle_infrequent_storage_object_tags) > 0 && var.lifecycle_infrequent_storage_object_prefix == "" ? [1] : []
+      for_each = length(var.lifecycle_infrequent_storage_object_tags) == 0 && var.lifecycle_infrequent_storage_object_prefix == "" ? [1] : []
+      content {
+        prefix = ""
+      }
+    }
+
+    dynamic "filter" {
+      for_each = length(var.lifecycle_infrequent_storage_object_tags) == 1 && var.lifecycle_infrequent_storage_object_prefix == "" ? [1] : []
+      content {
+        dynamic "tag" {
+          for_each = var.lifecycle_infrequent_storage_object_tags
+          content {
+            key   = tag.key
+            value = tag.value
+          }
+        }
+      }
+    }
+
+    dynamic "filter" {
+      for_each = length(var.lifecycle_infrequent_storage_object_tags) > 1 && var.lifecycle_infrequent_storage_object_prefix == "" ? [1] : []
       content {
         and {
           tags = var.lifecycle_infrequent_storage_object_tags
@@ -156,7 +176,27 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
     id = "transition-to-glacier"
 
     dynamic "filter" {
-      for_each = length(var.lifecycle_glacier_object_tags) > 0 && var.lifecycle_glacier_object_prefix == "" ? [1] : []
+      for_each = length(var.lifecycle_glacier_object_tags) == 0 && var.lifecycle_glacier_object_prefix == "" ? [1] : []
+      content {
+        prefix = ""
+      }
+    }
+
+    dynamic "filter" {
+      for_each = length(var.lifecycle_glacier_object_tags) == 1 && var.lifecycle_glacier_object_prefix == "" ? [1] : []
+      content {
+        dynamic "tag" {
+          for_each = var.lifecycle_glacier_object_tags
+          content {
+            key   = tag.key
+            value = tag.value
+          }
+        }
+      }
+    }
+
+    dynamic "filter" {
+      for_each = length(var.lifecycle_glacier_object_tags) > 1 && var.lifecycle_glacier_object_prefix == "" ? [1] : []
       content {
         and {
           tags = var.lifecycle_glacier_object_tags
@@ -264,6 +304,13 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
     id = "expire-objects"
 
     dynamic "filter" {
+      for_each = length(var.lifecycle_expiration_object_tags) == 0 && var.lifecycle_expiration_object_prefix == "" ? [1] : []
+      content {
+        prefix = ""
+      }
+    }
+
+    dynamic "filter" {
       for_each = length(var.lifecycle_expiration_object_tags) == 1 && var.lifecycle_expiration_object_prefix == "" ? [1] : []
       content {
         dynamic "tag" {
@@ -342,7 +389,27 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
     id = "abort-multipart-upload"
 
     dynamic "filter" {
-      for_each = length(var.lifecycle_abort_multipart_upload_object_tags) > 0 && var.lifecycle_abort_multipart_upload_object_prefix == "" ? [1] : []
+      for_each = length(var.lifecycle_abort_multipart_upload_object_tags) == 0 && var.lifecycle_abort_multipart_upload_object_prefix == "" ? [1] : []
+      content {
+        prefix = ""
+      }
+    }
+
+    dynamic "filter" {
+      for_each = length(var.lifecycle_abort_multipart_upload_object_tags) == 1 && var.lifecycle_abort_multipart_upload_object_prefix == "" ? [1] : []
+      content {
+        dynamic "tag" {
+          for_each = var.lifecycle_abort_multipart_upload_object_tags
+          content {
+            key   = tag.key
+            value = tag.value
+          }
+        }
+      }
+    }
+
+    dynamic "filter" {
+      for_each = length(var.lifecycle_abort_multipart_upload_object_tags) > 1 && var.lifecycle_abort_multipart_upload_object_prefix == "" ? [1] : []
       content {
         and {
           tags = var.lifecycle_abort_multipart_upload_object_tags
