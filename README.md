@@ -42,6 +42,7 @@ Optional replication settings:
 - `replication_destination_storage_class` to force replicas into a specific class (optional; if omitted, source storage class is preserved where supported)
 - `replication_source_kms_key_arns` to allow replication of source SSE-KMS objects encrypted with additional source keys
 - `replication_report_bucket_arn` when S3 Batch Replication completion reports should be written to a bucket other than `replication_destination_bucket_arn`
+- `replication_report_bucket_kms_key_arn` when the report bucket uses a different KMS key than `replication_destination_kms_key_arn`
 - `replication_prefix` to replicate only a subset of objects
 - `replication_metrics_enabled` to emit replication metrics and notifications
 - `replication_time_control_enabled` to opt into S3 Replication Time Control (requires `replication_metrics_enabled = true`)
@@ -55,6 +56,7 @@ Replication behavior:
 - Source buckets can contain a mix of SSE-S3 and SSE-KMS objects
 - If source SSE-KMS objects use keys other than the module-managed bucket key, supply those extra key ARNs in `replication_source_kms_key_arns`
 - S3 Batch Replication completion report permissions are scoped to `replication_report_bucket_arn` when set, otherwise `replication_destination_bucket_arn`
+- S3 Batch Replication report KMS permissions use `replication_report_bucket_kms_key_arn` when set, otherwise `replication_destination_kms_key_arn`
 - Delete markers replicate by default so the destination bucket stays in sync with source deletes
 - Replication Time Control stays disabled unless you explicitly opt in
 

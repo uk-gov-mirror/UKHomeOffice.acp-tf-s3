@@ -21,6 +21,7 @@ locals {
   destination_account_id        = var.replication_destination_account_id != "" ? var.replication_destination_account_id : data.aws_caller_identity.current.account_id
   ownership_override_enabled    = local.destination_account_id != data.aws_caller_identity.current.account_id
   report_bucket_arn             = var.replication_report_bucket_arn != "" ? var.replication_report_bucket_arn : var.replication_destination_bucket_arn
+  report_bucket_kms_key_arn     = var.replication_report_bucket_kms_key_arn != "" ? var.replication_report_bucket_kms_key_arn : var.replication_destination_kms_key_arn
   source_kms_key_arns           = distinct(compact(concat(var.source_kms_key_arn != "" ? [var.source_kms_key_arn] : [], var.source_additional_kms_key_arns)))
 }
 
@@ -57,6 +58,7 @@ resource "aws_iam_policy" "s3_replication" {
         {
           Effect = "Allow"
           Action = [
+            "s3:InitiateReplication",
             "s3:GetObjectVersionForReplication",
             "s3:GetObjectVersionAcl",
             "s3:GetObjectVersionTagging",
@@ -80,6 +82,8 @@ resource "aws_iam_policy" "s3_replication" {
           Action = [
             "s3:GetBucketLocation",
             "s3:ListBucket",
+            "s3:GetObject",
+            "s3:GetObjectVersion",
             "s3:PutObject",
             "s3:PutObjectAcl",
           ]
@@ -103,12 +107,16 @@ resource "aws_iam_policy" "s3_replication" {
         {
           Effect = "Allow"
           Action = [
+            "kms:Decrypt",
             "kms:Encrypt",
             "kms:ReEncrypt*",
             "kms:GenerateDataKey*",
             "kms:DescribeKey",
           ]
-          Resource = [var.replication_destination_kms_key_arn]
+          Resource = distinct(compact([
+            var.replication_destination_kms_key_arn,
+            local.report_bucket_kms_key_arn,
+          ]))
         },
       ],
     )

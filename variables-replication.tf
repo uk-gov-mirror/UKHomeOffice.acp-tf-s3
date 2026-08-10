@@ -69,6 +69,12 @@ variable "replication_report_bucket_arn" {
   }
 }
 
+variable "replication_report_bucket_kms_key_arn" {
+  description = "Optional KMS key ARN for encrypting S3 Batch Replication reports. Defaults to replication_destination_kms_key_arn"
+  type        = string
+  default     = ""
+}
+
 variable "replication_source_kms_key_arns" {
   description = "Optional additional source KMS key ARNs for replicating SSE-KMS objects when the source bucket contains objects encrypted with keys other than the module-managed bucket key"
   type        = list(string)

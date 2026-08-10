@@ -516,6 +516,7 @@ module "replication" {
   replication_destination_storage_class = var.replication_destination_storage_class
   replication_destination_kms_key_arn  = var.replication_destination_kms_key_arn
   replication_report_bucket_arn        = var.replication_report_bucket_arn
+  replication_report_bucket_kms_key_arn = var.replication_report_bucket_kms_key_arn
   replication_prefix                   = var.replication_prefix
   replication_delete_marker_replication_status = var.replication_delete_marker_replication_status
   replication_metrics_enabled          = var.replication_metrics_enabled

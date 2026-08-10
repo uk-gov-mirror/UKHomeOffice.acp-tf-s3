@@ -71,6 +71,12 @@ variable "replication_report_bucket_arn" {
   default     = ""
 }
 
+variable "replication_report_bucket_kms_key_arn" {
+  description = "Optional KMS key ARN for encrypting S3 Batch Replication reports. Defaults to replication_destination_kms_key_arn"
+  type        = string
+  default     = ""
+}
+
 variable "replication_prefix" {
   description = "Object prefix to replicate. Leave empty to replicate all objects"
   type        = string
