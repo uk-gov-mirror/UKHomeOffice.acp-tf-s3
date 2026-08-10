@@ -495,8 +495,34 @@ resource "aws_s3_bucket_versioning" "this" {
   bucket = aws_s3_bucket.this.id
 
   versioning_configuration {
-    status = var.versioning_status != "" ? var.versioning_status : var.versioning_enabled ? "Enabled" : "Disabled"
+    status = var.replication_enabled ? "Enabled" : var.versioning_status != "" ? var.versioning_status : var.versioning_enabled ? "Enabled" : "Disabled"
   }
+}
+
+module "replication" {
+  count  = var.replication_enabled ? 1 : 0
+  source = "./modules/replication"
+
+  source_bucket_id                     = aws_s3_bucket.this.id
+  source_bucket_arn                    = aws_s3_bucket.this.arn
+  source_kms_key_arn                   = local.use_kms_encryption ? aws_kms_key.this[0].arn : ""
+  source_additional_kms_key_arns       = var.replication_source_kms_key_arns
+  iam_user_policy_name                 = var.iam_user_policy_name
+  environment                          = var.environment
+  name                                 = var.name
+  tags                                 = var.tags
+  replication_destination_bucket_arn   = var.replication_destination_bucket_arn
+  replication_destination_account_id   = var.replication_destination_account_id
+  replication_destination_storage_class = var.replication_destination_storage_class
+  replication_destination_kms_key_arn  = var.replication_destination_kms_key_arn
+  replication_report_bucket_arn        = var.replication_report_bucket_arn
+  replication_prefix                   = var.replication_prefix
+  replication_delete_marker_replication_status = var.replication_delete_marker_replication_status
+  replication_metrics_enabled          = var.replication_metrics_enabled
+  replication_time_control_enabled     = var.replication_time_control_enabled
+  replication_replica_modifications_enabled = var.replication_replica_modifications_enabled
+
+  depends_on = [aws_s3_bucket_versioning.this]
 }
 
 resource "aws_s3_bucket_website_configuration" "this" {

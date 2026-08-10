@@ -26,6 +26,77 @@ For standard buckets, KMS encryption is used if a `kms_alias` is provided. If `k
 | `kms_alias` specified | AES256                      | KMS                         |
 | `kms_alias` is `""`   | AES256                      | AES256                      |
 
+## Replication support
+
+This module now supports optional S3 replication so data can be continuously synced to a destination bucket ahead of platform cutover.
+
+Enable replication by setting:
+
+- `replication_enabled = true`
+- `replication_destination_bucket_arn` to the target bucket ARN
+- `replication_destination_kms_key_arn` to encrypt replicas with a defined destination KMS key
+
+Optional replication settings:
+
+- `replication_destination_account_id` to identify the destination account for cross-account ownership takeover; omit it for same-account replication
+- `replication_destination_storage_class` to force replicas into a specific class (optional; if omitted, source storage class is preserved where supported)
+- `replication_source_kms_key_arns` to allow replication of source SSE-KMS objects encrypted with additional source keys
+- `replication_report_bucket_arn` when S3 Batch Replication completion reports should be written to a bucket other than `replication_destination_bucket_arn`
+- `replication_prefix` to replicate only a subset of objects
+- `replication_metrics_enabled` to emit replication metrics and notifications
+- `replication_time_control_enabled` to opt into S3 Replication Time Control (requires `replication_metrics_enabled = true`)
+
+Replication IAM role naming is deterministic and internal: `<bucket_name>-s3-replication-role`, truncated to IAM's 64-character limit.
+
+Replication behavior:
+
+- Replicas are always written using the configured `replication_destination_kms_key_arn`
+- Cross-account replication switches replica ownership to the destination account when `replication_destination_account_id` is set to a different account ID
+- Source buckets can contain a mix of SSE-S3 and SSE-KMS objects
+- If source SSE-KMS objects use keys other than the module-managed bucket key, supply those extra key ARNs in `replication_source_kms_key_arns`
+- S3 Batch Replication completion report permissions are scoped to `replication_report_bucket_arn` when set, otherwise `replication_destination_bucket_arn`
+- Delete markers replicate by default so the destination bucket stays in sync with source deletes
+- Replication Time Control stays disabled unless you explicitly opt in
+
+When replication is enabled, source bucket versioning is automatically set to `Enabled` because S3 replication requires versioning.
+
+Example:
+
+```hcl
+module "s3" {
+   source = "git::https://github.com/UKHomeOffice/acp-tf-s3?ref=master"
+
+   name                 = "legacy-prod-data"
+   environment          = var.environment
+   bucket_iam_user      = "legacy-prod-data-user"
+   iam_user_policy_name = "legacy-prod-data-policy"
+
+   replication_enabled                 = true
+   replication_destination_bucket_arn  = "arn:aws:s3:::new-platform-prod-data"
+   replication_destination_account_id  = "123456789012"
+   replication_destination_kms_key_arn = "arn:aws:kms:eu-west-2:123456789012:key/abcd-1234"
+}
+```
+
+To opt into S3 Replication Time Control:
+
+```hcl
+module "s3" {
+   source = "git::https://github.com/UKHomeOffice/acp-tf-s3?ref=master"
+
+   name                                = "legacy-prod-data"
+   environment                         = var.environment
+   bucket_iam_user                     = "legacy-prod-data-user"
+   iam_user_policy_name                = "legacy-prod-data-policy"
+   replication_enabled                  = true
+   replication_destination_bucket_arn   = "arn:aws:s3:::new-platform-prod-data"
+   replication_destination_account_id   = "123456789012"
+   replication_destination_kms_key_arn  = "arn:aws:kms:eu-west-2:123456789012:key/abcd-1234"
+   replication_metrics_enabled          = true
+   replication_time_control_enabled     = true
+}
+```
+
 ## Upgrading
 
 v2 of the module is not backwards-compatible with v1 following refactoring of the module.
@@ -100,23 +171,13 @@ Please note the following:
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | ~> 1.0 |
 | <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 3.0, < 5.0 |
 
-## Providers
-
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 4.67.0 |
-
-## Modules
-
 | Name | Source | Version |
 |------|--------|---------|
 | <a name="module_self_serve_access_keys"></a> [self\_serve\_access\_keys](#module\_self\_serve\_access\_keys) | git::https://github.com/UKHomeOffice/acp-tf-self-serve-access-keys | v0.2.0 |
 
 ## Resources
-
-| Name | Type |
-|------|------|
-| [aws_iam_policy.s3_bucket_iam_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
 | [aws_iam_policy.s3_bucket_iam_website_policy_1](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
 | [aws_iam_policy.s3_bucket_iam_whitelist_ip_and_vpc_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
 | [aws_iam_policy.s3_bucket_iam_whitelist_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
@@ -133,7 +194,6 @@ Please note the following:
 | [aws_iam_user.s3_bucket_iam_user](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_user) | resource |
 | [aws_iam_user_policy_attachment.attach_s3_bucket_iam_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_user_policy_attachment) | resource |
 | [aws_iam_user_policy_attachment.attach_s3_bucket_whitelist_iam_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_user_policy_attachment) | resource |
-| [aws_iam_user_policy_attachment.attach_s3_bucket_whitelist_ip_and_vpc_iam_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_user_policy_attachment) | resource |
 | [aws_iam_user_policy_attachment.attach_s3_bucket_with_kms_and_whitelist_iam_policy_1](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_user_policy_attachment) | resource |
 | [aws_iam_user_policy_attachment.attach_s3_bucket_with_kms_and_whitelist_iam_policy_2](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_user_policy_attachment) | resource |
 | [aws_iam_user_policy_attachment.attach_s3_bucket_with_kms_and_whitelist_ip_and_vpc_iam_policy_1](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_user_policy_attachment) | resource |
