@@ -70,7 +70,7 @@ variable "replication_report_bucket_arn" {
 }
 
 variable "replication_report_bucket_kms_key_arn" {
-  description = "Optional KMS key ARN for encrypting S3 Batch Replication reports. Defaults to replication_destination_kms_key_arn"
+  description = "Optional KMS key ARN for encrypting S3 Batch Replication reports written to replication_report_bucket_arn. Defaults to replication_destination_kms_key_arn"
   type        = string
   default     = ""
 }

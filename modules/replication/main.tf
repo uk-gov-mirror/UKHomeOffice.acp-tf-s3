@@ -22,6 +22,10 @@ locals {
   ownership_override_enabled    = local.destination_account_id != data.aws_caller_identity.current.account_id
   report_bucket_arn             = var.replication_report_bucket_arn != "" ? var.replication_report_bucket_arn : var.replication_destination_bucket_arn
   report_bucket_kms_key_arn     = var.replication_report_bucket_kms_key_arn != "" ? var.replication_report_bucket_kms_key_arn : var.replication_destination_kms_key_arn
+  destination_and_report_kms_key_arns = distinct(compact([
+    var.replication_destination_kms_key_arn,
+    local.report_bucket_kms_key_arn,
+  ]))
   source_kms_key_arns           = distinct(compact(concat(var.source_kms_key_arn != "" ? [var.source_kms_key_arn] : [], var.source_additional_kms_key_arns)))
 }
 
@@ -113,10 +117,7 @@ resource "aws_iam_policy" "s3_replication" {
             "kms:GenerateDataKey*",
             "kms:DescribeKey",
           ]
-          Resource = distinct(compact([
-            var.replication_destination_kms_key_arn,
-            local.report_bucket_kms_key_arn,
-          ]))
+          Resource = local.destination_and_report_kms_key_arns
         },
       ],
     )
@@ -167,8 +168,11 @@ resource "aws_s3_bucket_replication_configuration" "this" {
         content {
           status = "Enabled"
 
-          event_threshold {
-            minutes = 15
+          dynamic "event_threshold" {
+            for_each = var.replication_time_control_enabled ? [1] : []
+            content {
+              minutes = 15
+            }
           }
         }
       }
@@ -201,5 +205,7 @@ resource "aws_s3_bucket_replication_configuration" "this" {
     }
   }
 
-  depends_on = [aws_iam_role_policy_attachment.s3_replication]
+  depends_on = [
+    aws_iam_role_policy_attachment.s3_replication,
+  ]
 }

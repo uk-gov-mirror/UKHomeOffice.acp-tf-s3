@@ -19,6 +19,39 @@ locals {
   email_tags              = { for i, email in var.email_addresses : "email${i}" => email }
   use_kms_encryption      = var.kms_alias != "" && !var.website_hosting
   create_lifecycle_policy = var.create_lifecycle_policy
+  datasync_source_role_arns = distinct(var.datasync_source_role_arns)
+  datasync_source_role_arns_json = join(", ", formatlist("\"%s\"", local.datasync_source_role_arns))
+  datasync_source_policy_statements_json = var.datasync_source_access_enabled && length(local.datasync_source_role_arns) > 0 ? trimspace(<<-POLICY
+    ,{
+      "Sid": "DataSyncSourceBucketRead",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": [${local.datasync_source_role_arns_json}]
+      },
+      "Action": [
+        "s3:GetBucketLocation",
+        "s3:ListBucket",
+        "s3:ListBucketMultipartUploads"
+      ],
+      "Resource": "${aws_s3_bucket.this.arn}"
+    },
+    {
+      "Sid": "DataSyncSourceObjectRead",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": [${local.datasync_source_role_arns_json}]
+      },
+      "Action": [
+        "s3:GetObject",
+        "s3:GetObjectTagging",
+        "s3:GetObjectVersion",
+        "s3:GetObjectVersionTagging",
+        "s3:GetObjectVersionAcl"
+      ],
+      "Resource": "${aws_s3_bucket.this.arn}/*"
+    }
+  POLICY
+  ) : ""
 }
 
 data "aws_caller_identity" "current" {
@@ -499,6 +532,15 @@ resource "aws_s3_bucket_versioning" "this" {
   }
 }
 
+resource "aws_kms_grant" "datasync_source_decrypt" {
+  count = var.datasync_source_access_enabled && local.use_kms_encryption ? length(local.datasync_source_role_arns) : 0
+
+  name              = "datasync-source-${replace(var.name, ".", "-")}-${count.index}"
+  key_id            = aws_kms_key.this[0].arn
+  grantee_principal = local.datasync_source_role_arns[count.index]
+  operations        = ["Decrypt"]
+}
+
 module "replication" {
   count  = var.replication_enabled ? 1 : 0
   source = "./modules/replication"
@@ -556,6 +598,7 @@ resource "aws_s3_bucket_policy" "s3_website_bucket" {
       "Action": "s3:GetObject",
       "Resource": "arn:aws:s3:::${var.name}/*"
     }
+    ${local.datasync_source_policy_statements_json}
   ]
 }
 POLICY
@@ -585,10 +628,51 @@ resource "aws_s3_bucket_policy" "enforce_tls_bucket_policy" {
       },
       "Principal": "*"
     }
+    ${local.datasync_source_policy_statements_json}
   ]
 }
 POLICY
 
+}
+
+resource "aws_s3_bucket_policy" "datasync_source_bucket_policy" {
+  count  = !var.website_hosting && !var.enforce_tls && var.datasync_source_access_enabled && length(local.datasync_source_role_arns) > 0 ? 1 : 0
+  bucket = aws_s3_bucket.this.id
+  policy = <<POLICY
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DataSyncSourceBucketRead",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": [${local.datasync_source_role_arns_json}]
+      },
+      "Action": [
+        "s3:GetBucketLocation",
+        "s3:ListBucket",
+        "s3:ListBucketMultipartUploads"
+      ],
+      "Resource": "${aws_s3_bucket.this.arn}"
+    },
+    {
+      "Sid": "DataSyncSourceObjectRead",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": [${local.datasync_source_role_arns_json}]
+      },
+      "Action": [
+        "s3:GetObject",
+        "s3:GetObjectTagging",
+        "s3:GetObjectVersion",
+        "s3:GetObjectVersionTagging",
+        "s3:GetObjectVersionAcl"
+      ],
+      "Resource": "${aws_s3_bucket.this.arn}/*"
+    }
+  ]
+}
+POLICY
 }
 
 resource "aws_iam_user" "s3_bucket_iam_user" {
@@ -835,6 +919,7 @@ resource "aws_s3_bucket_public_access_block" "s3_bucket" {
     aws_s3_bucket_policy.s3_website_bucket,
     aws_s3_bucket_policy.s3_website_bucket,
     aws_s3_bucket_policy.enforce_tls_bucket_policy,
+    aws_s3_bucket_policy.datasync_source_bucket_policy,
     aws_iam_policy.s3_bucket_with_kms_iam_policy_1,
     aws_iam_policy.s3_bucket_with_kms_iam_policy_2,
     aws_iam_policy.s3_bucket_with_kms_and_whitelist_iam_policy_1,
