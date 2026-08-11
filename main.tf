@@ -22,7 +22,7 @@ locals {
   datasync_source_role_arns = distinct(var.datasync_source_role_arns)
   datasync_source_role_arns_json = join(", ", formatlist("\"%s\"", local.datasync_source_role_arns))
   datasync_source_policy_statements_json = var.datasync_source_access_enabled && length(local.datasync_source_role_arns) > 0 ? trimspace(<<-POLICY
-    ,{
+    {
       "Sid": "DataSyncSourceBucketRead",
       "Effect": "Allow",
       "Principal": {
@@ -598,7 +598,7 @@ resource "aws_s3_bucket_policy" "s3_website_bucket" {
       "Action": "s3:GetObject",
       "Resource": "arn:aws:s3:::${var.name}/*"
     }
-    ${local.datasync_source_policy_statements_json}
+    ${local.datasync_source_policy_statements_json != "" ? ",\n    ${local.datasync_source_policy_statements_json}" : ""}
   ]
 }
 POLICY
@@ -628,7 +628,7 @@ resource "aws_s3_bucket_policy" "enforce_tls_bucket_policy" {
       },
       "Principal": "*"
     }
-    ${local.datasync_source_policy_statements_json}
+    ${local.datasync_source_policy_statements_json != "" ? ",\n    ${local.datasync_source_policy_statements_json}" : ""}
   ]
 }
 POLICY
@@ -642,34 +642,7 @@ resource "aws_s3_bucket_policy" "datasync_source_bucket_policy" {
 {
   "Version": "2012-10-17",
   "Statement": [
-    {
-      "Sid": "DataSyncSourceBucketRead",
-      "Effect": "Allow",
-      "Principal": {
-        "AWS": [${local.datasync_source_role_arns_json}]
-      },
-      "Action": [
-        "s3:GetBucketLocation",
-        "s3:ListBucket",
-        "s3:ListBucketMultipartUploads"
-      ],
-      "Resource": "${aws_s3_bucket.this.arn}"
-    },
-    {
-      "Sid": "DataSyncSourceObjectRead",
-      "Effect": "Allow",
-      "Principal": {
-        "AWS": [${local.datasync_source_role_arns_json}]
-      },
-      "Action": [
-        "s3:GetObject",
-        "s3:GetObjectTagging",
-        "s3:GetObjectVersion",
-        "s3:GetObjectVersionTagging",
-        "s3:GetObjectVersionAcl"
-      ],
-      "Resource": "${aws_s3_bucket.this.arn}/*"
-    }
+    ${local.datasync_source_policy_statements_json}
   ]
 }
 POLICY
