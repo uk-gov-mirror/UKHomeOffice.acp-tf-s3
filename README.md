@@ -43,7 +43,7 @@ Optional replication settings:
 - `replication_source_kms_key_arns` to allow replication of source SSE-KMS objects encrypted with additional source keys
 - `replication_report_bucket_arn` when S3 Batch Replication completion reports should be written to a bucket other than `replication_destination_bucket_arn`
 - `datasync_source_access_enabled = true` to opt into DataSync source-access policy path
-- `datasync_source_role_arns` to grant DataSync source-read access (bucket policy grants and source KMS decrypt grants are managed by the root module)
+- `datasync_source_role_arns` to grant DataSync source-read access (bucket policy grants and source KMS decrypt key-policy access are managed by the root module)
 - `replication_prefix` to replicate only a subset of objects
 - `replication_metrics_enabled` to emit replication metrics and notifications
 - `replication_time_control_enabled` to opt into S3 Replication Time Control (requires `replication_metrics_enabled = true`)

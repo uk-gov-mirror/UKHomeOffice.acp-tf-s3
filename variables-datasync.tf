@@ -1,11 +1,11 @@
 variable "datasync_source_access_enabled" {
-  description = "Enable DataSync source access policy and source KMS decrypt grants"
+  description = "Enable DataSync source access policy and source KMS decrypt key-policy access"
   type        = bool
   default     = false
 }
 
 variable "datasync_source_role_arns" {
-  description = "Optional IAM role ARNs used by DataSync to read from this source bucket. When set, the module grants source bucket read and source KMS decrypt access"
+  description = "Optional IAM role ARNs used by DataSync to read from this source bucket. When set, the module grants source bucket read and source KMS decrypt key-policy access"
   type        = list(string)
   default     = []
 

@@ -532,15 +532,6 @@ resource "aws_s3_bucket_versioning" "this" {
   }
 }
 
-resource "aws_kms_grant" "datasync_source_decrypt" {
-  count = var.datasync_source_access_enabled && local.use_kms_encryption ? length(local.datasync_source_role_arns) : 0
-
-  name              = "datasync-source-${replace(var.name, ".", "-")}-${count.index}"
-  key_id            = aws_kms_key.this[0].arn
-  grantee_principal = local.datasync_source_role_arns[count.index]
-  operations        = ["Decrypt"]
-}
-
 module "replication" {
   count  = var.replication_enabled ? 1 : 0
   source = "./modules/replication"
