@@ -20,7 +20,7 @@ variable "source_additional_kms_key_arns" {
   default     = []
 }
 
-variable "iam_user_policy_name" {
+variable "replication_policy_name" {
   description = "Base policy name used for replication IAM resources"
   type        = string
 }

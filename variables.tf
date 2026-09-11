@@ -20,10 +20,6 @@ variable "create_lifecycle_policy" {
   default     = true
 }
 
-variable "bucket_iam_user" {
-  description = "The name of the iam user assigned to the created s3 bucket"
-}
-
 variable "environment" {
   description = "The environment the S3 is running in i.e. dev, prod etc"
 }
@@ -85,10 +81,6 @@ variable "expire_noncurrent_versions" {
   description = "Allow expiration/retention rules to apply for all non-current version objects"
   type        = bool
   default     = true
-}
-
-variable "iam_user_policy_name" {
-  description = "The policy name of attached to the user"
 }
 
 variable "key_rotation" {
@@ -236,11 +228,6 @@ variable "log_target_prefix" {
 
 variable "name" {
   description = "A descriptive name for the S3 instance"
-}
-
-variable "number_of_users" {
-  description = "The number of user to generate credentials for"
-  default     = 1
 }
 
 variable "tags" {

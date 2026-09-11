@@ -10,8 +10,6 @@ Module usage:
         acl                  = "private"
         environment          = "${var.environment}"
         kms_alias            = "mykey"
-        bucket_iam_user      = "fake-s3-bucket-user"
-        iam_user_policy_name = "fake-s3-bucket-policy"
 
      }
 
@@ -72,8 +70,6 @@ module "s3" {
 
    name                 = "legacy-prod-data"
    environment          = var.environment
-   bucket_iam_user      = "legacy-prod-data-user"
-   iam_user_policy_name = "legacy-prod-data-policy"
 
    replication_enabled                 = true
    replication_destination_bucket_arn  = "arn:aws:s3:::new-platform-prod-data"
@@ -90,8 +86,6 @@ module "s3" {
 
    name                                = "legacy-prod-data"
    environment                         = var.environment
-   bucket_iam_user                     = "legacy-prod-data-user"
-   iam_user_policy_name                = "legacy-prod-data-policy"
    replication_enabled                  = true
    replication_destination_bucket_arn   = "arn:aws:s3:::new-platform-prod-data"
    replication_destination_account_id   = "123456789012"
