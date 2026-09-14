@@ -16,30 +16,45 @@ Module usage:
 */
 
 locals {
-  email_tags                     = { for i, email in var.email_addresses : "email${i}" => email }
-  use_kms_encryption             = var.kms_alias != "" && !var.website_hosting
-  create_lifecycle_policy        = var.create_lifecycle_policy
-  datasync_source_role_arns      = distinct(var.datasync_source_role_arns)
+  email_tags                = { for i, email in var.email_addresses : "email${i}" => email }
+  use_kms_encryption        = var.kms_alias != "" && !var.website_hosting
+  create_lifecycle_policy   = var.create_lifecycle_policy
+  datasync_source_role_arns = distinct(var.datasync_source_role_arns)
+  # Principal is the account root(s) of the DataSync role(s), scoped down to the
+  # exact role ARNs via an aws:PrincipalArn condition. This mirrors the KMS key
+  # policy pattern (see DataSyncSourceDecrypt in policy.tf) and, unlike naming the
+  # role ARN directly in Principal, does NOT require the role to exist at apply
+  # time — so the apply won't fail if the DataSync role is created afterwards.
+  datasync_source_root_arns = distinct([
+    for arn in local.datasync_source_role_arns :
+    "arn:aws:iam::${split(":", arn)[4]}:root"
+  ])
+  datasync_source_root_arns_json = join(", ", formatlist("\"%s\"", local.datasync_source_root_arns))
   datasync_source_role_arns_json = join(", ", formatlist("\"%s\"", local.datasync_source_role_arns))
   datasync_source_policy_statements_json = var.datasync_source_access_enabled && length(local.datasync_source_role_arns) > 0 ? trimspace(<<-POLICY
     {
       "Sid": "DataSyncSourceBucketRead",
       "Effect": "Allow",
       "Principal": {
-        "AWS": [${local.datasync_source_role_arns_json}]
+        "AWS": [${local.datasync_source_root_arns_json}]
       },
       "Action": [
         "s3:GetBucketLocation",
         "s3:ListBucket",
         "s3:ListBucketMultipartUploads"
       ],
-      "Resource": "${aws_s3_bucket.this.arn}"
+      "Resource": "${aws_s3_bucket.this.arn}",
+      "Condition": {
+        "ArnLike": {
+          "aws:PrincipalArn": [${local.datasync_source_role_arns_json}]
+        }
+      }
     },
     {
       "Sid": "DataSyncSourceObjectRead",
       "Effect": "Allow",
       "Principal": {
-        "AWS": [${local.datasync_source_role_arns_json}]
+        "AWS": [${local.datasync_source_root_arns_json}]
       },
       "Action": [
         "s3:GetObject",
@@ -48,7 +63,12 @@ locals {
         "s3:GetObjectVersionTagging",
         "s3:GetObjectVersionAcl"
       ],
-      "Resource": "${aws_s3_bucket.this.arn}/*"
+      "Resource": "${aws_s3_bucket.this.arn}/*",
+      "Condition": {
+        "ArnLike": {
+          "aws:PrincipalArn": [${local.datasync_source_role_arns_json}]
+        }
+      }
     }
   POLICY
   ) : ""
@@ -76,6 +96,18 @@ resource "aws_kms_key" "this" {
       "Env" = var.environment
     },
   )
+
+  lifecycle {
+    # DataSync source decrypt access is injected into the module-generated KMS
+    # key policy. A caller-supplied kms_key_policy replaces that policy wholesale,
+    # so the DataSyncSourceDecrypt grant would be silently dropped and DataSync
+    # could not decrypt source objects. Fail fast instead of shipping a broken
+    # grant: if you need both, add the decrypt statement to your kms_key_policy.
+    precondition {
+      condition     = !(var.datasync_source_access_enabled && var.kms_key_policy != "")
+      error_message = "datasync_source_access_enabled = true is incompatible with a custom kms_key_policy: a caller-supplied kms_key_policy overrides the module-generated policy and drops the DataSync decrypt grant. Either leave kms_key_policy unset (empty) so the module manages the policy, or include the DataSync source role decrypt permissions (kms:Decrypt, kms:DescribeKey) in your kms_key_policy."
+    }
+  }
 }
 
 resource "aws_kms_alias" "this" {

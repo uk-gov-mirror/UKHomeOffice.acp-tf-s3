@@ -30,6 +30,8 @@ For standard buckets, KMS encryption is used if a `kms_alias` is provided. If `k
 
 This module now supports optional S3 replication so data can be continuously synced to a destination bucket ahead of platform cutover.
 
+> **Warning:** setting `replication_enabled = true` makes Terraform manage the bucket's replication configuration and **replaces it entirely**. If the bucket already has replication rules configured outside Terraform (console, CLI, or another tool), those rules are **wiped on the first apply** and replaced with this module's single rule. Import or recreate any existing rules through the module before enabling. For cross-account replication you must also grant the replication role on the destination side: the **destination bucket policy** and the **destination KMS key policy** both need to allow this module's replication role (ARN available via the `replication_role_arn` output) — the module cannot set those destination-account policies for you.
+
 Enable replication by setting:
 
 - `replication_enabled = true`
@@ -42,8 +44,9 @@ Optional replication settings:
 - `replication_destination_storage_class` to force replicas into a specific class (optional; if omitted, source storage class is preserved where supported)
 - `replication_source_kms_key_arns` to allow replication of source SSE-KMS objects encrypted with additional source keys
 - `replication_report_bucket_arn` when S3 Batch Replication completion reports should be written to a bucket other than `replication_destination_bucket_arn`
-- `datasync_source_access_enabled = true` to opt into DataSync source-access policy path
-- `datasync_source_role_arns` to grant DataSync source-read access (bucket policy grants and source KMS decrypt key-policy access are managed by the root module)
+- `replication_report_bucket_kms_key_arn` to encrypt those completion reports with a key other than `replication_destination_kms_key_arn`
+- `replication_delete_marker_replication_status` to control whether delete markers replicate (`Enabled` by default, so deletes mirror to the destination)
+- `replication_replica_modifications_enabled` to sync replica modifications back for advanced bidirectional-style scenarios
 - `replication_prefix` to replicate only a subset of objects
 - `replication_metrics_enabled` to emit replication metrics and notifications
 - `replication_time_control_enabled` to opt into S3 Replication Time Control (requires `replication_metrics_enabled = true`)
@@ -57,8 +60,6 @@ Replication behavior:
 - Source buckets can contain a mix of SSE-S3 and SSE-KMS objects
 - If source SSE-KMS objects use keys other than the module-managed bucket key, supply those extra key ARNs in `replication_source_kms_key_arns`
 - S3 Batch Replication completion report permissions are scoped to `replication_report_bucket_arn` when set, otherwise `replication_destination_bucket_arn`
-- DataSync source bucket policy grants are composed into the root bucket policy document for TLS, website, and standard modes so policy ownership remains single-source
-- DataSync source access remains disabled unless `datasync_source_access_enabled = true`
 - Delete markers replicate by default so the destination bucket stays in sync with source deletes
 - Replication Time Control stays disabled unless you explicitly opt in
 
@@ -100,6 +101,45 @@ module "s3" {
    replication_time_control_enabled     = true
 }
 ```
+
+## DataSync source access
+
+DataSync source access is independent of replication — it does not require
+`replication_enabled = true`. Enable it to let one or more DataSync IAM roles read
+from this bucket: the module adds source bucket read grants to the bucket policy
+and a source KMS decrypt statement to the module-managed KMS key policy.
+
+Enable it with:
+
+- `datasync_source_access_enabled = true` to opt into the DataSync source-access policy path
+- `datasync_source_role_arns` — the DataSync IAM role ARN(s) granted source read + source KMS decrypt
+
+Behaviour:
+
+- DataSync source bucket policy grants are composed into the root bucket policy document for TLS, website, and standard modes so policy ownership remains single-source
+- DataSync source access remains disabled unless `datasync_source_access_enabled = true`
+
+Example:
+
+```hcl
+module "s3" {
+   source = "git::https://github.com/UKHomeOffice/acp-tf-s3?ref=master"
+
+   name        = "legacy-prod-data"
+   environment = var.environment
+
+   datasync_source_access_enabled = true
+   datasync_source_role_arns      = [
+     "arn:aws:iam::123456789012:role/service-role/s3-datasync-role-dev",
+   ]
+}
+```
+
+Note: `datasync_source_access_enabled = true` is incompatible with a custom
+`kms_key_policy`. A caller-supplied `kms_key_policy` replaces the module-managed
+policy and would drop the DataSync decrypt grant, so the module fails fast in that
+case. Leave `kms_key_policy` unset, or include the DataSync role's `kms:Decrypt` /
+`kms:DescribeKey` permissions in your own policy.
 
 ## Upgrading
 
@@ -172,7 +212,7 @@ Please note the following:
 
 | Name | Version |
 | ---- | ------- |
-| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | ~> 1.0 |
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.9 |
 | <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 3.0, < 5.0 |
 
 ## Providers
@@ -340,6 +380,7 @@ Please note the following:
 
 | Name | Description |
 | ---- | ----------- |
+| <a name="output_replication_role_arn"></a> [replication\_role\_arn](#output\_replication\_role\_arn) | ARN of the IAM role used by S3 replication (empty when replication is disabled) |
 | <a name="output_s3_bucket_arn"></a> [s3\_bucket\_arn](#output\_s3\_bucket\_arn) | ARN of generated S3 bucket |
 | <a name="output_s3_bucket_id"></a> [s3\_bucket\_id](#output\_s3\_bucket\_id) | ID of generated S3 bucket |
 | <a name="output_s3_bucket_kms_key"></a> [s3\_bucket\_kms\_key](#output\_s3\_bucket\_kms\_key) | KMS Key ID of the generated bucket |
