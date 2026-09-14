@@ -26,7 +26,7 @@ locals {
     var.replication_destination_kms_key_arn,
     local.report_bucket_kms_key_arn,
   ]))
-  source_kms_key_arns           = distinct(compact(concat(var.source_kms_key_arn != "" ? [var.source_kms_key_arn] : [], var.source_additional_kms_key_arns)))
+  source_kms_key_arns = distinct(compact(concat(var.source_kms_key_arn != "" ? [var.source_kms_key_arn] : [], var.source_additional_kms_key_arns)))
 }
 
 resource "aws_iam_role" "s3_replication" {
@@ -44,85 +44,91 @@ resource "aws_iam_role" "s3_replication" {
   )
 }
 
-resource "aws_iam_policy" "s3_replication" {
-  name = "${var.replication_policy_name}-S3ReplicationPolicy"
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = concat(
-      [
-        {
-          Effect = "Allow"
-          Action = [
-            "s3:GetReplicationConfiguration",
-            "s3:ListBucket",
-            "s3:PutInventoryConfiguration",
-          ]
-          Resource = [var.source_bucket_arn]
-        },
-        {
-          Effect = "Allow"
-          Action = [
-            "s3:InitiateReplication",
-            "s3:GetObjectVersionForReplication",
-            "s3:GetObjectVersionAcl",
-            "s3:GetObjectVersionTagging",
-            "s3:GetObjectRetention",
-            "s3:GetObjectLegalHold",
-          ]
-          Resource = ["${var.source_bucket_arn}/*"]
-        },
-        {
-          Effect = "Allow"
-          Action = [
-            "s3:ReplicateObject",
-            "s3:ReplicateDelete",
-            "s3:ReplicateTags",
-            "s3:ObjectOwnerOverrideToBucketOwner",
-          ]
-          Resource = ["${var.replication_destination_bucket_arn}/*"]
-        },
-        {
-          Effect = "Allow"
-          Action = [
-            "s3:GetBucketLocation",
-            "s3:ListBucket",
-            "s3:GetObject",
-            "s3:GetObjectVersion",
-            "s3:PutObject",
-            "s3:PutObjectAcl",
-          ]
-          Resource = [
-            local.report_bucket_arn,
-            "${local.report_bucket_arn}/*",
-          ]
-        },
-      ],
-      length(local.source_kms_key_arns) > 0 ? [
-        {
-          Effect = "Allow"
-          Action = [
-            "kms:Decrypt",
-            "kms:DescribeKey",
-          ]
-          Resource = local.source_kms_key_arns
-        },
-      ] : [],
-      [
-        {
-          Effect = "Allow"
-          Action = [
-            "kms:Decrypt",
-            "kms:Encrypt",
-            "kms:ReEncrypt*",
-            "kms:GenerateDataKey*",
-            "kms:DescribeKey",
-          ]
-          Resource = local.destination_and_report_kms_key_arns
-        },
-      ],
-    )
-  })
+data "aws_iam_policy_document" "s3_replication" {
+  statement {
+    sid    = "SourceBucketPermissions"
+    effect = "Allow"
+    actions = [
+      "s3:GetReplicationConfiguration",
+      "s3:ListBucket",
+      "s3:PutInventoryConfiguration",
+    ]
+    resources = [var.source_bucket_arn]
+  }
 
+  statement {
+    sid    = "SourceObjectReplicationPermissions"
+    effect = "Allow"
+    actions = [
+      "s3:InitiateReplication",
+      "s3:GetObjectVersionForReplication",
+      "s3:GetObjectVersionAcl",
+      "s3:GetObjectVersionTagging",
+      "s3:GetObjectRetention",
+      "s3:GetObjectLegalHold",
+    ]
+    resources = ["${var.source_bucket_arn}/*"]
+  }
+
+  statement {
+    sid    = "DestinationObjectReplicationPermissions"
+    effect = "Allow"
+    actions = [
+      "s3:ReplicateObject",
+      "s3:ReplicateDelete",
+      "s3:ReplicateTags",
+      "s3:ObjectOwnerOverrideToBucketOwner",
+    ]
+    resources = ["${var.replication_destination_bucket_arn}/*"]
+  }
+
+  statement {
+    sid    = "ReportBucketPermissions"
+    effect = "Allow"
+    actions = [
+      "s3:GetBucketLocation",
+      "s3:ListBucket",
+      "s3:GetObject",
+      "s3:GetObjectVersion",
+      "s3:PutObject",
+      "s3:PutObjectAcl",
+    ]
+    resources = [
+      local.report_bucket_arn,
+      "${local.report_bucket_arn}/*",
+    ]
+  }
+
+  dynamic "statement" {
+    for_each = length(local.source_kms_key_arns) > 0 ? [1] : []
+    content {
+      sid    = "SourceKmsDecrypt"
+      effect = "Allow"
+      actions = [
+        "kms:Decrypt",
+        "kms:DescribeKey",
+      ]
+      resources = local.source_kms_key_arns
+    }
+  }
+
+  statement {
+    sid    = "DestinationAndReportKmsAccess"
+    effect = "Allow"
+    actions = [
+      "kms:Decrypt",
+      "kms:Encrypt",
+      "kms:ReEncrypt*",
+      "kms:GenerateDataKey*",
+      "kms:DescribeKey",
+    ]
+    resources = local.destination_and_report_kms_key_arns
+  }
+}
+
+resource "aws_iam_policy" "s3_replication" {
+  name        = "${var.replication_policy_name}-S3ReplicationPolicy"
+  policy      = data.aws_iam_policy_document.s3_replication.json
   description = "Policy used by S3 to replicate objects to destination bucket"
 }
 

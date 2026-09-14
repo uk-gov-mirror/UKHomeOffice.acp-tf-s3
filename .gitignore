@@ -2,7 +2,6 @@
 **/terraform.tfstate
 *.backup
 *.lock.info
-.terraform.lock.hcl
 
 # Deployment-specific config — do NOT commit to this public module repo
 backend.tf
