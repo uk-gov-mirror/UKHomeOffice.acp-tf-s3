@@ -17,3 +17,7 @@ output "s3_bucket_kms_key_arn" {
   description = "KMS Key ARN of the generated bucket"
   value       = element(concat(aws_kms_key.this.*.arn, [""]), 0)
 }
+output "replication_role_arn" {
+  description = "ARN of the IAM role used by S3 replication (empty when replication is disabled)"
+  value       = element(concat(module.replication.*.replication_role_arn, [""]), 0)
+}

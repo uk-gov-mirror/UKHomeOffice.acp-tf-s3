@@ -26,6 +26,121 @@ For standard buckets, KMS encryption is used if a `kms_alias` is provided. If `k
 | `kms_alias` specified | AES256                      | KMS                         |
 | `kms_alias` is `""`   | AES256                      | AES256                      |
 
+## Replication support
+
+This module now supports optional S3 replication so data can be continuously synced to a destination bucket ahead of platform cutover.
+
+> **Warning:** setting `replication_enabled = true` makes Terraform manage the bucket's replication configuration and **replaces it entirely**. If the bucket already has replication rules configured outside Terraform (console, CLI, or another tool), those rules are **wiped on the first apply** and replaced with this module's single rule. Import or recreate any existing rules through the module before enabling. For cross-account replication you must also grant the replication role on the destination side: the **destination bucket policy** and the **destination KMS key policy** both need to allow this module's replication role (ARN available via the `replication_role_arn` output) — the module cannot set those destination-account policies for you.
+
+Enable replication by setting:
+
+- `replication_enabled = true`
+- `replication_destination_bucket_arn` to the target bucket ARN
+- `replication_destination_kms_key_arn` to encrypt replicas with a defined destination KMS key
+
+Optional replication settings:
+
+- `replication_destination_account_id` to identify the destination account for cross-account ownership takeover; omit it for same-account replication
+- `replication_destination_storage_class` to force replicas into a specific class (optional; if omitted, source storage class is preserved where supported)
+- `replication_source_kms_key_arns` to allow replication of source SSE-KMS objects encrypted with additional source keys
+- `replication_report_bucket_arn` when S3 Batch Replication completion reports should be written to a bucket other than `replication_destination_bucket_arn`
+- `replication_report_bucket_kms_key_arn` to encrypt those completion reports with a key other than `replication_destination_kms_key_arn`
+- `replication_delete_marker_replication_status` to control whether delete markers replicate (`Enabled` by default, so deletes mirror to the destination)
+- `replication_replica_modifications_enabled` to sync replica modifications back for advanced bidirectional-style scenarios
+- `replication_prefix` to replicate only a subset of objects
+- `replication_metrics_enabled` to emit replication metrics and notifications
+- `replication_time_control_enabled` to opt into S3 Replication Time Control (requires `replication_metrics_enabled = true`)
+
+Replication IAM role naming is deterministic and internal: `<bucket_name>-s3-replication-role`, truncated to IAM's 64-character limit.
+
+Replication behavior:
+
+- Replicas are always written using the configured `replication_destination_kms_key_arn`
+- Cross-account replication switches replica ownership to the destination account when `replication_destination_account_id` is set to a different account ID
+- Source buckets can contain a mix of SSE-S3 and SSE-KMS objects
+- If source SSE-KMS objects use keys other than the module-managed bucket key, supply those extra key ARNs in `replication_source_kms_key_arns`
+- S3 Batch Replication completion report permissions are scoped to `replication_report_bucket_arn` when set, otherwise `replication_destination_bucket_arn`
+- Delete markers replicate by default so the destination bucket stays in sync with source deletes
+- Replication Time Control stays disabled unless you explicitly opt in
+
+When replication is enabled, source bucket versioning is automatically set to `Enabled` because S3 replication requires versioning.
+
+Example:
+
+```hcl
+module "s3" {
+   source = "git::https://github.com/UKHomeOffice/acp-tf-s3?ref=master"
+
+   name                 = "legacy-prod-data"
+   environment          = var.environment
+   bucket_iam_user      = "legacy-prod-data-user"
+   iam_user_policy_name = "legacy-prod-data-policy"
+
+   replication_enabled                 = true
+   replication_destination_bucket_arn  = "arn:aws:s3:::new-platform-prod-data"
+   replication_destination_account_id  = "123456789012"
+   replication_destination_kms_key_arn = "arn:aws:kms:eu-west-2:123456789012:key/abcd-1234"
+}
+```
+
+To opt into S3 Replication Time Control:
+
+```hcl
+module "s3" {
+   source = "git::https://github.com/UKHomeOffice/acp-tf-s3?ref=master"
+
+   name                                = "legacy-prod-data"
+   environment                         = var.environment
+   bucket_iam_user                     = "legacy-prod-data-user"
+   iam_user_policy_name                = "legacy-prod-data-policy"
+   replication_enabled                  = true
+   replication_destination_bucket_arn   = "arn:aws:s3:::new-platform-prod-data"
+   replication_destination_account_id   = "123456789012"
+   replication_destination_kms_key_arn  = "arn:aws:kms:eu-west-2:123456789012:key/abcd-1234"
+   replication_metrics_enabled          = true
+   replication_time_control_enabled     = true
+}
+```
+
+## DataSync source access
+
+DataSync source access is independent of replication — it does not require
+`replication_enabled = true`. Enable it to let one or more DataSync IAM roles read
+from this bucket: the module adds source bucket read grants to the bucket policy
+and a source KMS decrypt statement to the module-managed KMS key policy.
+
+Enable it with:
+
+- `datasync_source_access_enabled = true` to opt into the DataSync source-access policy path
+- `datasync_source_role_arns` — the DataSync IAM role ARN(s) granted source read + source KMS decrypt
+
+Behaviour:
+
+- DataSync source bucket policy grants are composed into the root bucket policy document for TLS, website, and standard modes so policy ownership remains single-source
+- DataSync source access remains disabled unless `datasync_source_access_enabled = true`
+
+Example:
+
+```hcl
+module "s3" {
+   source = "git::https://github.com/UKHomeOffice/acp-tf-s3?ref=master"
+
+   name        = "legacy-prod-data"
+   environment = var.environment
+
+   datasync_source_access_enabled = true
+   datasync_source_role_arns      = [
+     "arn:aws:iam::123456789012:role/service-role/s3-datasync-role-dev",
+   ]
+}
+```
+
+Note: `datasync_source_access_enabled = true` is incompatible with a custom
+`kms_key_policy`. A caller-supplied `kms_key_policy` replaces the module-managed
+policy and would drop the DataSync decrypt grant, so the module fails fast in that
+case. Leave `kms_key_policy` unset, or include the DataSync role's `kms:Decrypt` /
+`kms:DescribeKey` permissions in your own policy.
+
 ## Upgrading
 
 v2 of the module is not backwards-compatible with v1 following refactoring of the module.
@@ -96,26 +211,27 @@ Please note the following:
 ## Requirements
 
 | Name | Version |
-|------|---------|
-| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | ~> 1.0 |
+| ---- | ------- |
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.9 |
 | <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 3.0, < 5.0 |
 
 ## Providers
 
 | Name | Version |
-|------|---------|
+| ---- | ------- |
 | <a name="provider_aws"></a> [aws](#provider\_aws) | 4.67.0 |
 
 ## Modules
 
 | Name | Source | Version |
-|------|--------|---------|
+| ---- | ------ | ------- |
+| <a name="module_replication"></a> [replication](#module\_replication) | ./modules/replication | n/a |
 | <a name="module_self_serve_access_keys"></a> [self\_serve\_access\_keys](#module\_self\_serve\_access\_keys) | git::https://github.com/UKHomeOffice/acp-tf-self-serve-access-keys | v0.2.0 |
 
 ## Resources
 
 | Name | Type |
-|------|------|
+| ---- | ---- |
 | [aws_iam_policy.s3_bucket_iam_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
 | [aws_iam_policy.s3_bucket_iam_website_policy_1](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
 | [aws_iam_policy.s3_bucket_iam_whitelist_ip_and_vpc_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
@@ -154,6 +270,7 @@ Please note the following:
 | [aws_s3_bucket_lifecycle_configuration.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_lifecycle_configuration) | resource |
 | [aws_s3_bucket_logging.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_logging) | resource |
 | [aws_s3_bucket_ownership_controls.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_ownership_controls) | resource |
+| [aws_s3_bucket_policy.datasync_source_bucket_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_policy) | resource |
 | [aws_s3_bucket_policy.enforce_tls_bucket_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_policy) | resource |
 | [aws_s3_bucket_policy.s3_website_bucket](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_policy) | resource |
 | [aws_s3_bucket_public_access_block.s3_bucket](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_public_access_block) | resource |
@@ -185,24 +302,26 @@ Please note the following:
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
+| ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_acceleration_status"></a> [acceleration\_status](#input\_acceleration\_status) | Sets the accelerate configuration of an existing bucket. Can be Enabled or Suspended. | `string` | `"Suspended"` | no |
 | <a name="input_acl"></a> [acl](#input\_acl) | The access control list assigned to this bucket | `string` | `"private"` | no |
 | <a name="input_block_public_access"></a> [block\_public\_access](#input\_block\_public\_access) | Blocks all public access to the bucket | `bool` | `false` | no |
-| <a name="input_bucket_iam_user"></a> [bucket\_iam\_user](#input\_bucket\_iam\_user) | The name of the iam user assigned to the created s3 bucket | `any` | n/a | yes |
+| <a name="input_bucket_iam_user"></a> [bucket\_iam\_user](#input\_bucket\_iam\_user) | The name of the iam user assigned to the created s3 bucket | `string` | n/a | yes |
 | <a name="input_cmk_enable_key_rotation"></a> [cmk\_enable\_key\_rotation](#input\_cmk\_enable\_key\_rotation) | Enables CMK key rotation | `bool` | `true` | no |
-| <a name="input_cors_allowed_headers"></a> [cors\_allowed\_headers](#input\_cors\_allowed\_headers) | Specifies which headers are allowed. | `list` | <pre>[<br>  "Authorization"<br>]</pre> | no |
-| <a name="input_cors_allowed_methods"></a> [cors\_allowed\_methods](#input\_cors\_allowed\_methods) | Specifies which methods are allowed. Can be GET, PUT, POST, DELETE or HEAD. | `list` | <pre>[<br>  "GET"<br>]</pre> | no |
-| <a name="input_cors_allowed_origins"></a> [cors\_allowed\_origins](#input\_cors\_allowed\_origins) | Specifies which origins are allowed. | `list` | <pre>[<br>  "*"<br>]</pre> | no |
+| <a name="input_cors_allowed_headers"></a> [cors\_allowed\_headers](#input\_cors\_allowed\_headers) | Specifies which headers are allowed. | `list` | <pre>[<br/>  "Authorization"<br/>]</pre> | no |
+| <a name="input_cors_allowed_methods"></a> [cors\_allowed\_methods](#input\_cors\_allowed\_methods) | Specifies which methods are allowed. Can be GET, PUT, POST, DELETE or HEAD. | `list` | <pre>[<br/>  "GET"<br/>]</pre> | no |
+| <a name="input_cors_allowed_origins"></a> [cors\_allowed\_origins](#input\_cors\_allowed\_origins) | Specifies which origins are allowed. | `list` | <pre>[<br/>  "*"<br/>]</pre> | no |
 | <a name="input_cors_expose_headers"></a> [cors\_expose\_headers](#input\_cors\_expose\_headers) | Specifies expose header in the response. | `list` | `[]` | no |
 | <a name="input_cors_max_age_seconds"></a> [cors\_max\_age\_seconds](#input\_cors\_max\_age\_seconds) | Specifies time in seconds that browser can cache the response for a preflight request. | `string` | `"3000"` | no |
 | <a name="input_create_lifecycle_policy"></a> [create\_lifecycle\_policy](#input\_create\_lifecycle\_policy) | States whether the module autocreates the lifecycle policy | `bool` | `true` | no |
+| <a name="input_datasync_source_access_enabled"></a> [datasync\_source\_access\_enabled](#input\_datasync\_source\_access\_enabled) | Enable DataSync source access policy and source KMS decrypt key-policy access | `bool` | `false` | no |
+| <a name="input_datasync_source_role_arns"></a> [datasync\_source\_role\_arns](#input\_datasync\_source\_role\_arns) | Optional IAM role ARNs used by DataSync to read from this source bucket. When set, the module grants source bucket read and source KMS decrypt key-policy access | `list(string)` | `[]` | no |
 | <a name="input_email_addresses"></a> [email\_addresses](#input\_email\_addresses) | A list of email addresses for key rotation notifications. | `list` | `[]` | no |
 | <a name="input_enforce_kms_key_use"></a> [enforce\_kms\_key\_use](#input\_enforce\_kms\_key\_use) | Whether or not to require a PutObject request to specify the KMS key id that was created. Defaults to true. Should only be set to false to emulate the behaviour of v0.x of the module and only until the tenants have changed their code to specify the KMS key id in their requests | `bool` | `true` | no |
 | <a name="input_enforce_tls"></a> [enforce\_tls](#input\_enforce\_tls) | Specifies if the bucket will be enforce a TLS bucket policy | `bool` | `true` | no |
 | <a name="input_environment"></a> [environment](#input\_environment) | The environment the S3 is running in i.e. dev, prod etc | `any` | n/a | yes |
 | <a name="input_expire_noncurrent_versions"></a> [expire\_noncurrent\_versions](#input\_expire\_noncurrent\_versions) | Allow expiration/retention rules to apply for all non-current version objects | `bool` | `true` | no |
-| <a name="input_iam_user_policy_name"></a> [iam\_user\_policy\_name](#input\_iam\_user\_policy\_name) | The policy name of attached to the user | `any` | n/a | yes |
+| <a name="input_iam_user_policy_name"></a> [iam\_user\_policy\_name](#input\_iam\_user\_policy\_name) | The policy name of attached to the user | `string` | n/a | yes |
 | <a name="input_key_rotation"></a> [key\_rotation](#input\_key\_rotation) | Enable email notifications for old IAM keys. | `bool` | `true` | no |
 | <a name="input_kms_alias"></a> [kms\_alias](#input\_kms\_alias) | The alias name for the kms key used to encrypt and decrypt the created S3 bucket objects | `string` | `""` | no |
 | <a name="input_kms_key_policy"></a> [kms\_key\_policy](#input\_kms\_key\_policy) | KMS key policy (uses a default policy if omitted) | `string` | `""` | no |
@@ -234,6 +353,19 @@ Please note the following:
 | <a name="input_number_of_users"></a> [number\_of\_users](#input\_number\_of\_users) | The number of user to generate credentials for | `number` | `1` | no |
 | <a name="input_ownership_controls"></a> [ownership\_controls](#input\_ownership\_controls) | Ownership controls for the writer must be defined by default | `string` | `"ObjectWriter"` | no |
 | <a name="input_ownership_controls_object"></a> [ownership\_controls\_object](#input\_ownership\_controls\_object) | control\_object\_ownership needs to be set to true | `bool` | `true` | no |
+| <a name="input_replication_delete_marker_replication_status"></a> [replication\_delete\_marker\_replication\_status](#input\_replication\_delete\_marker\_replication\_status) | Delete marker replication status. Defaults to Enabled so deletes mirror by default. Valid values are Enabled or Disabled | `string` | `"Enabled"` | no |
+| <a name="input_replication_destination_account_id"></a> [replication\_destination\_account\_id](#input\_replication\_destination\_account\_id) | Destination AWS account ID for cross-account replication ownership takeover. Leave empty for same-account replication | `string` | `""` | no |
+| <a name="input_replication_destination_bucket_arn"></a> [replication\_destination\_bucket\_arn](#input\_replication\_destination\_bucket\_arn) | ARN of the destination S3 bucket for replication | `string` | `""` | no |
+| <a name="input_replication_destination_kms_key_arn"></a> [replication\_destination\_kms\_key\_arn](#input\_replication\_destination\_kms\_key\_arn) | Destination KMS key ARN for replicated objects. Required when replication is enabled so replicas are always written with a defined KMS key | `string` | `""` | no |
+| <a name="input_replication_destination_storage_class"></a> [replication\_destination\_storage\_class](#input\_replication\_destination\_storage\_class) | Optional storage class override for replicated objects. When omitted, source object storage class is preserved where supported | `string` | `null` | no |
+| <a name="input_replication_enabled"></a> [replication\_enabled](#input\_replication\_enabled) | Enable cross-bucket replication from this bucket to a destination bucket | `bool` | `false` | no |
+| <a name="input_replication_metrics_enabled"></a> [replication\_metrics\_enabled](#input\_replication\_metrics\_enabled) | Enable S3 replication metrics and event notifications | `bool` | `false` | no |
+| <a name="input_replication_prefix"></a> [replication\_prefix](#input\_replication\_prefix) | Object prefix to replicate. Leave empty to replicate all objects | `string` | `""` | no |
+| <a name="input_replication_replica_modifications_enabled"></a> [replication\_replica\_modifications\_enabled](#input\_replication\_replica\_modifications\_enabled) | Enable replica modification sync for advanced bidirectional-style replication scenarios | `bool` | `false` | no |
+| <a name="input_replication_report_bucket_arn"></a> [replication\_report\_bucket\_arn](#input\_replication\_report\_bucket\_arn) | Optional S3 bucket ARN for S3 Batch Replication completion reports. Defaults to replication\_destination\_bucket\_arn | `string` | `""` | no |
+| <a name="input_replication_report_bucket_kms_key_arn"></a> [replication\_report\_bucket\_kms\_key\_arn](#input\_replication\_report\_bucket\_kms\_key\_arn) | Optional KMS key ARN for encrypting S3 Batch Replication reports written to replication\_report\_bucket\_arn. Defaults to replication\_destination\_kms\_key\_arn | `string` | `""` | no |
+| <a name="input_replication_source_kms_key_arns"></a> [replication\_source\_kms\_key\_arns](#input\_replication\_source\_kms\_key\_arns) | Optional additional source KMS key ARNs for replicating SSE-KMS objects when the source bucket contains objects encrypted with keys other than the module-managed bucket key | `list(string)` | `[]` | no |
+| <a name="input_replication_time_control_enabled"></a> [replication\_time\_control\_enabled](#input\_replication\_time\_control\_enabled) | Enable S3 Replication Time Control. Requires replication\_metrics\_enabled | `bool` | `false` | no |
 | <a name="input_tags"></a> [tags](#input\_tags) | A map of tags to add to all resources | `map` | `{}` | no |
 | <a name="input_transition_noncurrent_versions"></a> [transition\_noncurrent\_versions](#input\_transition\_noncurrent\_versions) | Allow lifecycle rules to apply for all non-current version objects | `bool` | `true` | no |
 | <a name="input_versioning_enabled"></a> [versioning\_enabled](#input\_versioning\_enabled) | If versioning is set for buckets in case of accidental deletion; deprecated - use versioning\_status instead | `bool` | `false` | no |
@@ -247,7 +379,8 @@ Please note the following:
 ## Outputs
 
 | Name | Description |
-|------|-------------|
+| ---- | ----------- |
+| <a name="output_replication_role_arn"></a> [replication\_role\_arn](#output\_replication\_role\_arn) | ARN of the IAM role used by S3 replication (empty when replication is disabled) |
 | <a name="output_s3_bucket_arn"></a> [s3\_bucket\_arn](#output\_s3\_bucket\_arn) | ARN of generated S3 bucket |
 | <a name="output_s3_bucket_id"></a> [s3\_bucket\_id](#output\_s3\_bucket\_id) | ID of generated S3 bucket |
 | <a name="output_s3_bucket_kms_key"></a> [s3\_bucket\_kms\_key](#output\_s3\_bucket\_kms\_key) | KMS Key ID of the generated bucket |

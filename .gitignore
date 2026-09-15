@@ -2,3 +2,8 @@
 **/terraform.tfstate
 *.backup
 *.lock.info
+
+# Deployment-specific config — do NOT commit to this public module repo
+backend.tf
+env/
+*.tfvars

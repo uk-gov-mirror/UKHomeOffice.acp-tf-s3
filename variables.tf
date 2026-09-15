@@ -22,6 +22,7 @@ variable "create_lifecycle_policy" {
 
 variable "bucket_iam_user" {
   description = "The name of the iam user assigned to the created s3 bucket"
+  type        = string
 }
 
 variable "environment" {
@@ -89,6 +90,7 @@ variable "expire_noncurrent_versions" {
 
 variable "iam_user_policy_name" {
   description = "The policy name of attached to the user"
+  type        = string
 }
 
 variable "key_rotation" {
@@ -240,6 +242,7 @@ variable "name" {
 
 variable "number_of_users" {
   description = "The number of user to generate credentials for"
+  type        = number
   default     = 1
 }
 

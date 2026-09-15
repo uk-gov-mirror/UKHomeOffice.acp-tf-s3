@@ -16,9 +16,62 @@ Module usage:
 */
 
 locals {
-  email_tags              = { for i, email in var.email_addresses : "email${i}" => email }
-  use_kms_encryption      = var.kms_alias != "" && !var.website_hosting
-  create_lifecycle_policy = var.create_lifecycle_policy
+  email_tags                = { for i, email in var.email_addresses : "email${i}" => email }
+  use_kms_encryption        = var.kms_alias != "" && !var.website_hosting
+  create_lifecycle_policy   = var.create_lifecycle_policy
+  datasync_source_role_arns = distinct(var.datasync_source_role_arns)
+  # Principal is the account root(s) of the DataSync role(s), scoped down to the
+  # exact role ARNs via an aws:PrincipalArn condition. This mirrors the KMS key
+  # policy pattern (see DataSyncSourceDecrypt in policy.tf) and, unlike naming the
+  # role ARN directly in Principal, does NOT require the role to exist at apply
+  # time — so the apply won't fail if the DataSync role is created afterwards.
+  datasync_source_root_arns = distinct([
+    for arn in local.datasync_source_role_arns :
+    "arn:aws:iam::${split(":", arn)[4]}:root"
+  ])
+  datasync_source_root_arns_json = join(", ", formatlist("\"%s\"", local.datasync_source_root_arns))
+  datasync_source_role_arns_json = join(", ", formatlist("\"%s\"", local.datasync_source_role_arns))
+  datasync_source_policy_statements_json = var.datasync_source_access_enabled && length(local.datasync_source_role_arns) > 0 ? trimspace(<<-POLICY
+    {
+      "Sid": "DataSyncSourceBucketRead",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": [${local.datasync_source_root_arns_json}]
+      },
+      "Action": [
+        "s3:GetBucketLocation",
+        "s3:ListBucket",
+        "s3:ListBucketMultipartUploads"
+      ],
+      "Resource": "${aws_s3_bucket.this.arn}",
+      "Condition": {
+        "ArnLike": {
+          "aws:PrincipalArn": [${local.datasync_source_role_arns_json}]
+        }
+      }
+    },
+    {
+      "Sid": "DataSyncSourceObjectRead",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": [${local.datasync_source_root_arns_json}]
+      },
+      "Action": [
+        "s3:GetObject",
+        "s3:GetObjectTagging",
+        "s3:GetObjectVersion",
+        "s3:GetObjectVersionTagging",
+        "s3:GetObjectVersionAcl"
+      ],
+      "Resource": "${aws_s3_bucket.this.arn}/*",
+      "Condition": {
+        "ArnLike": {
+          "aws:PrincipalArn": [${local.datasync_source_role_arns_json}]
+        }
+      }
+    }
+  POLICY
+  ) : ""
 }
 
 data "aws_caller_identity" "current" {
@@ -43,6 +96,18 @@ resource "aws_kms_key" "this" {
       "Env" = var.environment
     },
   )
+
+  lifecycle {
+    # DataSync source decrypt access is injected into the module-generated KMS
+    # key policy. A caller-supplied kms_key_policy replaces that policy wholesale,
+    # so the DataSyncSourceDecrypt grant would be silently dropped and DataSync
+    # could not decrypt source objects. Fail fast instead of shipping a broken
+    # grant: if you need both, add the decrypt statement to your kms_key_policy.
+    precondition {
+      condition     = !(var.datasync_source_access_enabled && var.kms_key_policy != "")
+      error_message = "datasync_source_access_enabled = true is incompatible with a custom kms_key_policy: a caller-supplied kms_key_policy overrides the module-generated policy and drops the DataSync decrypt grant. Either leave kms_key_policy unset (empty) so the module manages the policy, or include the DataSync source role decrypt permissions (kms:Decrypt, kms:DescribeKey) in your kms_key_policy."
+    }
+  }
 }
 
 resource "aws_kms_alias" "this" {
@@ -495,8 +560,35 @@ resource "aws_s3_bucket_versioning" "this" {
   bucket = aws_s3_bucket.this.id
 
   versioning_configuration {
-    status = var.versioning_status != "" ? var.versioning_status : var.versioning_enabled ? "Enabled" : "Disabled"
+    status = var.replication_enabled ? "Enabled" : var.versioning_status != "" ? var.versioning_status : var.versioning_enabled ? "Enabled" : "Disabled"
   }
+}
+
+module "replication" {
+  count  = var.replication_enabled ? 1 : 0
+  source = "./modules/replication"
+
+  source_bucket_id                             = aws_s3_bucket.this.id
+  source_bucket_arn                            = aws_s3_bucket.this.arn
+  source_kms_key_arn                           = local.use_kms_encryption ? aws_kms_key.this[0].arn : ""
+  source_additional_kms_key_arns               = var.replication_source_kms_key_arns
+  replication_policy_name                      = "${var.name}-replication"
+  environment                                  = var.environment
+  name                                         = var.name
+  tags                                         = var.tags
+  replication_destination_bucket_arn           = var.replication_destination_bucket_arn
+  replication_destination_account_id           = var.replication_destination_account_id
+  replication_destination_storage_class        = var.replication_destination_storage_class
+  replication_destination_kms_key_arn          = var.replication_destination_kms_key_arn
+  replication_report_bucket_arn                = var.replication_report_bucket_arn
+  replication_report_bucket_kms_key_arn        = var.replication_report_bucket_kms_key_arn
+  replication_prefix                           = var.replication_prefix
+  replication_delete_marker_replication_status = var.replication_delete_marker_replication_status
+  replication_metrics_enabled                  = var.replication_metrics_enabled
+  replication_time_control_enabled             = var.replication_time_control_enabled
+  replication_replica_modifications_enabled    = var.replication_replica_modifications_enabled
+
+  depends_on = [aws_s3_bucket_versioning.this]
 }
 
 resource "aws_s3_bucket_website_configuration" "this" {
@@ -529,6 +621,7 @@ resource "aws_s3_bucket_policy" "s3_website_bucket" {
       "Action": "s3:GetObject",
       "Resource": "arn:aws:s3:::${var.name}/*"
     }
+    ${local.datasync_source_policy_statements_json != "" ? ",\n    ${local.datasync_source_policy_statements_json}" : ""}
   ]
 }
 POLICY
@@ -558,10 +651,24 @@ resource "aws_s3_bucket_policy" "enforce_tls_bucket_policy" {
       },
       "Principal": "*"
     }
+    ${local.datasync_source_policy_statements_json != "" ? ",\n    ${local.datasync_source_policy_statements_json}" : ""}
   ]
 }
 POLICY
 
+}
+
+resource "aws_s3_bucket_policy" "datasync_source_bucket_policy" {
+  count  = !var.website_hosting && !var.enforce_tls && var.datasync_source_access_enabled && length(local.datasync_source_role_arns) > 0 ? 1 : 0
+  bucket = aws_s3_bucket.this.id
+  policy = <<POLICY
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    ${local.datasync_source_policy_statements_json}
+  ]
+}
+POLICY
 }
 
 resource "aws_iam_user" "s3_bucket_iam_user" {
@@ -808,6 +915,7 @@ resource "aws_s3_bucket_public_access_block" "s3_bucket" {
     aws_s3_bucket_policy.s3_website_bucket,
     aws_s3_bucket_policy.s3_website_bucket,
     aws_s3_bucket_policy.enforce_tls_bucket_policy,
+    aws_s3_bucket_policy.datasync_source_bucket_policy,
     aws_iam_policy.s3_bucket_with_kms_iam_policy_1,
     aws_iam_policy.s3_bucket_with_kms_iam_policy_2,
     aws_iam_policy.s3_bucket_with_kms_and_whitelist_iam_policy_1,

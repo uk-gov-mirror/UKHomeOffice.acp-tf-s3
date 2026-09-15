@@ -214,6 +214,37 @@ data "aws_iam_policy_document" "kms_key_policy_document" {
       ]
     }
   }
+
+  dynamic "statement" {
+    for_each = var.datasync_source_access_enabled && length(local.datasync_source_role_arns) > 0 ? [1] : []
+
+    content {
+      sid    = "DataSyncSourceDecrypt"
+      effect = "Allow"
+
+      resources = ["*"]
+
+      actions = [
+        "kms:Decrypt",
+        "kms:DescribeKey",
+      ]
+
+      principals {
+        type = "AWS"
+
+        identifiers = distinct([
+          for arn in local.datasync_source_role_arns :
+          "arn:aws:iam::${split(":", arn)[4]}:root"
+        ])
+      }
+
+      condition {
+        test     = "ArnLike"
+        variable = "aws:PrincipalArn"
+        values   = local.datasync_source_role_arns
+      }
+    }
+  }
 }
 
 data "aws_iam_policy_document" "s3_bucket_with_kms_policy_document_whitelist_1" {
@@ -1194,3 +1225,4 @@ data "aws_iam_policy_document" "s3_tls_bucket_policy_document" {
   }
 
 }
+
