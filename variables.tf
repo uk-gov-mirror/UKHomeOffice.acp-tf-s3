@@ -1,3 +1,9 @@
+variable "account_type" {
+  description = "cc or acp. this will change key behaviour"
+  type        = string
+  default     = "acp"
+}
+
 variable "acl" {
   description = "The access control list assigned to this bucket"
   default     = "private"

@@ -16,6 +16,8 @@ Module usage:
 */
 
 locals {
+  account_type_invalidity   = var.account_type == "cc" && var.number_of_users > 0
+  account_type_check        = local.account_type_invalidity ? tobool( "ERROR: For 'cc' account type, number_of_users must be set to 0 as IAM user creation is blocked by Service Control Policies.") : true
   email_tags                = { for i, email in var.email_addresses : "email${i}" => email }
   use_kms_encryption        = var.kms_alias != "" && !var.website_hosting
   create_lifecycle_policy   = var.create_lifecycle_policy
@@ -672,7 +674,7 @@ POLICY
 }
 
 resource "aws_iam_user" "s3_bucket_iam_user" {
-  count = var.number_of_users
+  count = var.account_type == "cc" ? 0 : var.number_of_users
 
   name = "${var.bucket_iam_user}${var.number_of_users != 1 ? "-${count.index}" : ""}"
   path = "/"
