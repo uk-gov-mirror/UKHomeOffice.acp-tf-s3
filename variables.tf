@@ -28,6 +28,7 @@ variable "create_lifecycle_policy" {
 
 variable "bucket_iam_user" {
   description = "The name of the iam user assigned to the created s3 bucket"
+  default     = null
   type        = string
 }
 
