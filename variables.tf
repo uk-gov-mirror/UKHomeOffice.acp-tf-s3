@@ -97,6 +97,7 @@ variable "expire_noncurrent_versions" {
 
 variable "iam_user_policy_name" {
   description = "The policy name of attached to the user"
+  default     = null
   type        = string
 }
 
