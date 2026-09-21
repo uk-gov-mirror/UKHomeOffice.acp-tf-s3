@@ -1,4 +1,4 @@
-variable "account_type" {
+variable "org_moniker" {
   description = "cc or acp. this will change key behaviour"
   type        = string
   default     = "acp"
